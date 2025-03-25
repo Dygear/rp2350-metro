@@ -5,9 +5,8 @@ MEMORY {
     FLASH : ORIGIN = 0x10000000, LENGTH = 16384K
     /*
      * Some Adafruit RP2350 Metro boards have 8MB of PSRAM.
-     * I don't actaully know if this is the correct ORIGIN.
      */
-    PSRAM : ORIGIN = 0x30000000, LENGTH = 8192K
+    PSRAM : ORIGIN = 0x11000000, LENGTH = 8192K
     /*
      * RAM consists of 8 banks, SRAM0-SRAM7, with a striped mapping.
      * This is usually good for performance, as it distributes load on
