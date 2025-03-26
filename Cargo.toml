@@ -19,13 +19,15 @@ embassy-rp = { version = "0.4.0", features = [
     "unstable-pac",
     "time-driver",
     "critical-section-impl",
-    "rp235xa",
+    "rp235xb",
     "binary-info",
 ] }
 embassy-time = { version = "0.4.0", features = [
     "defmt",
     "defmt-timestamp-uptime",
 ] }
+embedded-hal-bus = { version = "0.1", features = ["async"] }
+embedded-sdmmc = "0.7.0"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 smart-leds = "0.3.0"
 static_cell = "2.1"

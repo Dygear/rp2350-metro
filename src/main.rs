@@ -11,11 +11,29 @@ use embassy_rp::{
     peripherals::PIO0,
     pio::{InterruptHandler, Pio},
     pio_programs::ws2812::{PioWs2812, PioWs2812Program},
+    spi,
+    spi::Spi,
 };
 use embassy_time::{Duration, Ticker};
+use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_sdmmc::sdcard::{DummyCsPin, SdCard};
 use panic_probe as _;
 use smart_leds::RGB8;
 use static_cell::StaticCell;
+
+struct DummyTimesource();
+impl embedded_sdmmc::TimeSource for DummyTimesource {
+    fn get_timestamp(&self) -> embedded_sdmmc::Timestamp {
+        embedded_sdmmc::Timestamp {
+            year_since_1970: 0,
+            zero_indexed_month: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+        }
+    }
+}
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
@@ -72,6 +90,24 @@ fn main() -> ! {
     // For the Adafruit RP2350 Metro the NeoPixel PIN is 25.
     let neo = PioWs2812::new(&mut common, sm0, p.DMA_CH0, p.PIN_25, &program);
 
+    // SD Card
+    // SPI clock needs to be running at <= 400kHz during initialization
+    let mut config = spi::Config::default();
+    config.frequency = 400_000;
+    let spi = Spi::new_blocking(p.SPI0, p.PIN_34, p.PIN_35, p.PIN_36, config);
+    // Use a dummy cs pin here, for embedded-hal SpiDevice compatibility reasons
+    let spi_dev = ExclusiveDevice::new_no_delay(spi, DummyCsPin);
+    // Real cs pin
+    let cs = Output::new(p.PIN_39, Level::High);
+
+    let sdcard = SdCard::new(spi_dev, cs, embassy_time::Delay);
+    info!("Card size is {} bytes", sdcard.num_bytes().unwrap());
+
+    // Now that the card is initialized, the SPI clock can go faster
+    let mut config = spi::Config::default();
+    config.frequency = 16_000_000;
+    sdcard.spi(|dev| dev.bus_mut().set_config(&config));
+
     spawn_core1(
         p.CORE1,
         unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) },
@@ -80,6 +116,15 @@ fn main() -> ! {
             executor1.run(|spawner| unwrap!(spawner.spawn(core1_task(btn, led))));
         },
     );
+
+    // Now let's look for volumes (also known as partitions) on our block device.
+    // To do this we need a Volume Manager. It will take ownership of the block device.
+    let mut volumes = embedded_sdmmc::VolumeManager::new(sdcard, DummyTimesource());
+
+    // Try and access Volume 0 (i.e. the first partition).
+    // The volume object holds information about the filesystem on that volume.
+    let volume0 = &volumes.open_volume(embedded_sdmmc::VolumeIdx(0)).unwrap();
+    info!("Volume 0: {:?}", defmt::Debug2Format(&volume0));
 
     let executor0 = EXECUTOR0.init(Executor::new());
     executor0.run(|spawner| unwrap!(spawner.spawn(core0_task(neo))));
@@ -97,7 +142,7 @@ async fn core0_task(mut neo: PioWs2812<'static, PIO0, 0, 1>) {
     let mut data = [RGB8::default(); NUM_LEDS];
 
     loop {
-        info!("Core 0 NeoPixel Loop");
+        info!("Core 0: NeoPixel Loop");
         for j in 0..(256 * 3) {
             for i in 0..NUM_LEDS {
                 data[i] = wheel((((i * 256) as u16 / NUM_LEDS as u16 + j as u16) & 255) as u8);
@@ -118,9 +163,9 @@ async fn core1_task(btn: Input<'static>, mut led: Output<'static>) {
 
         if btn_state != btn_level {
             if btn_level.into() {
-                info!("Core 1 Btn Released");
+                info!("Core 1: BOOT BTN Released");
             } else {
-                info!("Core 1 Btn Pressed");
+                info!("Core 1: BOOT BTN Pressed");
             }
             btn_state = btn_level;
         }
